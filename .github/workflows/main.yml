@@ -136,11 +136,12 @@ jobs:
 
   clippy:
     name: Clippy
-    runs-on: ubuntu-latest
     strategy:
       matrix:
         rust:
           - stable
+        os: [windows-latest, macos-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout Crate
         uses: actions/checkout@v2
@@ -156,4 +157,3 @@ jobs:
         with:
           command: clippy
           args: --all-targets -- --deny warnings
-
