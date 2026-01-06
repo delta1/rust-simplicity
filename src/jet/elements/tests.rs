@@ -33,6 +33,7 @@ fn test_ffi_env() {
         0x33, 0x2f, 0xb7, 0x1d, 0xda, 0x90, 0xff, 0x4b, 0xef, 0x53, 0x70, 0xf2, 0x52, 0x26, 0xd3,
         0xbc, 0x09, 0xfc,
     ];
+    let annex = vec![0x50, 0xde, 0xad, 0xbe, 0xef, 0xca, 0xfe, 0xba, 0xbe];
     let asset =
         confidential::Asset::Explicit(AssetId::from_inner(Midstate::from_byte_array(asset)));
     let tx = Transaction {
@@ -56,7 +57,7 @@ fn test_ffi_env() {
             witness: TxInWitness {
                 amount_rangeproof: None,
                 inflation_keys_rangeproof: None,
-                script_witness: vec![ctrl_blk.to_vec()],
+                script_witness: vec![ctrl_blk.to_vec(), annex.clone()],
                 pegin_witness: vec![],
             },
         }],
@@ -96,7 +97,7 @@ fn test_ffi_env() {
         0,
         script_cmr,
         ctrl_block,
-        None,
+        Some(annex),
         BlockHash::all_zeros(),
     );
 
@@ -105,6 +106,12 @@ fn test_ffi_env() {
         assert_eq!(
             BitMachine::test_exec(prog, &env).expect("executing"),
             Value::u32(100),
+        );
+        let prog = Arc::<ConstructNode<_>>::jet(&ctx, Elements::InputAnnexesHash);
+        let value = BitMachine::test_exec(prog, &env).unwrap();
+        assert_eq!(
+            value.to_string(),
+            "0xe12bfaea7a08608ecb28622a8500fd7b18883d048351137825ca51a692b7403e"
         );
     });
 }
