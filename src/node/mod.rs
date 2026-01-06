@@ -610,9 +610,9 @@ impl<N: Marker> Node<N> {
         &self.data
     }
 
-    /// Contruct a node from its constituent parts.
+    /// Construct a node from its constituent parts.
     ///
-    /// This method can be used to directly costruct a node. It will compute the CMR
+    /// This method can be used to directly construct a node. It will compute the CMR
     /// automatically based on the value of `inner` but requires that `cached_data`
     /// be provided.
     ///
