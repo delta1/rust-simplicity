@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: CC0-1.0
 
-use crate::dag::{DagLike, MaxSharing, NoSharing, PostOrderIterItem};
+use crate::dag::{DagLike, MaxSharing, NoSharing, PostOrderIterItem, InternalSharing};
 use crate::jet::Jet;
 use crate::types::arrow::{Arrow, FinalArrow};
 use crate::{encode, types, Value};
@@ -172,6 +172,97 @@ impl<J: Jet> CommitNode<J> {
     /// Accessor for the node's IHR, if known
     pub fn ihr(&self) -> Option<Ihr> {
         self.data.ihr
+    }
+
+    /// Compute the CPU cost (milli-weight units) of this committed program by
+    /// running a lightweight analysis over the DAG. This is a pure, local
+    /// computation that does not require witness data.
+    pub fn analyze_cost(&self) -> crate::analysis::Cost {
+        use crate::analysis::NodeBounds;
+
+        let mut bounds: Vec<NodeBounds> = Vec::new();
+        let mut arrows: Vec<FinalArrow> = Vec::new();
+
+        for data in self.post_order_iter::<InternalSharing>() {
+            let inner = data.node.inner().as_ref();
+            let b = match inner {
+                Inner::Iden => NodeBounds::iden(data.node.arrow().source.bit_width()),
+                Inner::Unit => NodeBounds::unit(),
+                Inner::InjL(_) => {
+                    let child = bounds[data.left_index.unwrap()];
+                    NodeBounds::injl(child)
+                }
+                Inner::InjR(_) => {
+                    let child = bounds[data.left_index.unwrap()];
+                    NodeBounds::injr(child)
+                }
+                Inner::Take(_) => {
+                    let child = bounds[data.left_index.unwrap()];
+                    NodeBounds::take(child)
+                }
+                Inner::Drop(_) => {
+                    let child = bounds[data.left_index.unwrap()];
+                    NodeBounds::drop(child)
+                }
+                Inner::Comp(_, _) => {
+                    let left_b = bounds[data.left_index.unwrap()];
+                    let right_b = bounds[data.right_index.unwrap()];
+                    // left arrow is available via previously-stored arrows
+                    let left_arrow = &arrows[data.left_index.unwrap()];
+                    NodeBounds::comp(left_b, right_b, left_arrow.target.bit_width())
+                }
+                Inner::Case(_, _) => {
+                    let left_b = bounds[data.left_index.unwrap()];
+                    let right_b = bounds[data.right_index.unwrap()];
+                    NodeBounds::case(left_b, right_b)
+                }
+                Inner::AssertL(_, _) => {
+                    let left_b = bounds[data.left_index.unwrap()];
+                    NodeBounds::assertl(left_b)
+                }
+                Inner::AssertR(_, _) => {
+                    let right_b = bounds[data.right_index.unwrap()];
+                    NodeBounds::assertr(right_b)
+                }
+                Inner::Pair(_, _) => {
+                    let left_b = bounds[data.left_index.unwrap()];
+                    let right_b = bounds[data.right_index.unwrap()];
+                    NodeBounds::pair(left_b, right_b)
+                }
+                Inner::Disconnect(_, _) => {
+                    let left_b = bounds[data.left_index.unwrap()];
+                    let right_b = if let Some(ridx) = data.right_index {
+                        bounds[ridx]
+                    } else {
+                        // No right child (NoDisconnect) — treat missing branch as unit
+                        NodeBounds::unit()
+                    };
+
+                    let left_arrow = &arrows[data.left_index.unwrap()];
+                    let right_src_bits = data
+                        .right_index
+                        .map(|ridx| arrows[ridx].source.bit_width())
+                        .unwrap_or(0);
+
+                    NodeBounds::disconnect(
+                        left_b,
+                        right_b,
+                        left_arrow.target.bit_width() - right_src_bits,
+                        left_arrow.source.bit_width(),
+                        left_arrow.target.bit_width(),
+                    )
+                }
+                Inner::Witness(_) => NodeBounds::witness(data.node.arrow().target.bit_width()),
+                Inner::Fail(_) => NodeBounds::fail(),
+                Inner::Jet(jet) => NodeBounds::jet(jet),
+                Inner::Word(ref w) => NodeBounds::const_word(w),
+            };
+
+            bounds.push(b);
+            arrows.push(data.node.arrow().clone());
+        }
+
+        bounds.last().unwrap().cost
     }
 
     /// Finalizes a DAG, by iterating through through it without sharing, attaching

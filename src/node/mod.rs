@@ -776,11 +776,16 @@ impl<N: Marker<Witness = Value>> Node<N> {
 mod tests {
     use ffi::tests::TestData;
 
+    use crate::ConstructNode;
     use crate::analysis::Cost;
     use crate::ffi;
     use crate::jet::Elements;
     use crate::BitIter;
     use crate::RedeemNode;
+    use crate::node::CoreConstructible;
+    use crate::node::DisconnectConstructible;
+    use crate::node::JetConstructible;
+    use crate::node::WitnessConstructible;
 
     fn check_merkle_roots(test: &TestData) {
         let prog = BitIter::from(test.prog.as_slice());
@@ -811,5 +816,176 @@ mod tests {
         check_merkle_roots(&schnorr6);
         check_merkle_roots(&ctx8_unpruned);
         check_merkle_roots(&ctx8_pruned);
+    }
+
+    #[test]
+    fn commit_and_redeem_costs_match_unit() {
+        use crate::types::Context;
+        use crate::node::SimpleFinalizer;
+        use crate::jet::Core;
+        use std::sync::Arc;
+
+        let commit = Context::with_context(|ctx| {
+            let construct = Arc::<ConstructNode<Core>>::unit(&ctx);
+            construct.finalize_types().unwrap()
+        });
+
+        let commit_cost = commit.analyze_cost();
+        let redeem = commit
+            .finalize(&mut SimpleFinalizer::new(std::iter::empty()))
+            .unwrap();
+
+        assert_eq!(redeem.cost(), commit_cost);
+    }
+
+    #[test]
+    fn commit_and_redeem_costs_match_pair_of_units() {
+        use crate::types::Context;
+        use crate::node::SimpleFinalizer;
+        use crate::jet::Core;
+        use std::sync::Arc;
+
+        let commit = Context::with_context(|ctx| {
+            let unit = Arc::<ConstructNode<Core>>::unit(&ctx);
+            let pair = Arc::<ConstructNode<Core>>::pair(&unit, &unit).unwrap();
+            pair.finalize_types_non_program().unwrap()
+        });
+
+        let commit_cost = commit.analyze_cost();
+        let redeem = commit
+            .finalize(&mut SimpleFinalizer::new(std::iter::empty()))
+            .unwrap();
+
+        assert_eq!(redeem.cost(), commit_cost);
+    }
+
+    #[test]
+    fn costs_match_const_word() {
+        use crate::types::Context;
+        use crate::node::SimpleFinalizer;
+        use crate::jet::Core;
+        use crate::value::Word;
+        use std::sync::Arc;
+
+        let commit = Context::with_context(|ctx| {
+            let w = Arc::<ConstructNode<Core>>::const_word(&ctx, Word::u32(123));
+            w.finalize_types_non_program().unwrap()
+        });
+
+        let commit_cost = commit.analyze_cost();
+        dbg!(commit_cost);
+        let redeem = commit
+            .finalize(&mut SimpleFinalizer::new(std::iter::empty()))
+            .unwrap();
+        dbg!(redeem.cost());
+
+        assert_eq!(redeem.cost(), commit_cost);
+    }
+
+    #[test]
+    fn costs_match_jet_add32() {
+        use crate::types::Context;
+        use crate::node::SimpleFinalizer;
+        use crate::jet::Core;
+        use crate::value::Word;
+        use std::sync::Arc;
+
+        let commit = Context::with_context(|ctx| {
+            let two_words = Arc::<ConstructNode<Core>>::pair(
+                &Arc::<ConstructNode<_>>::const_word(&ctx, Word::u32(2)),
+                &Arc::<ConstructNode<_>>::const_word(&ctx, Word::u32(16)),
+            )
+            .unwrap();
+            Arc::<ConstructNode<_>>::comp(&two_words, &Arc::<ConstructNode<_>>::jet(&ctx, Core::Add32))
+                .unwrap()
+            .finalize_types_non_program()
+            .unwrap()
+        });
+
+        let commit_cost = commit.analyze_cost();
+        dbg!(commit_cost);
+        let redeem = commit
+            .finalize(&mut SimpleFinalizer::new(std::iter::empty()))
+            .unwrap();
+        dbg!(redeem.cost());
+
+        assert_eq!(redeem.cost(), commit_cost);
+    }
+
+    #[test]
+    fn costs_match_case() {
+        use crate::types::Context;
+        use crate::node::SimpleFinalizer;
+        use crate::jet::Core;
+        use std::sync::Arc;
+
+        let commit = Context::with_context(|ctx| {
+            let left = Arc::<ConstructNode<Core>>::bit_true(&ctx);
+            let right = Arc::<ConstructNode<Core>>::bit_false(&ctx);
+            let case = Arc::<ConstructNode<Core>>::case(&left, &right).unwrap();
+            case.finalize_types_non_program().unwrap()
+        });
+
+        let commit_cost = commit.analyze_cost();
+        let redeem = commit
+            .finalize(&mut SimpleFinalizer::new(std::iter::empty()))
+            .unwrap();
+
+        assert_eq!(redeem.cost(), commit_cost);
+    }
+
+    #[test]
+    fn costs_match_disconnect() {
+        use crate::types::Context;
+        use crate::jet::Core;
+        use std::sync::Arc;
+
+        let (commit, redeem) = Context::with_context(|ctx| {
+            let unit = Arc::<ConstructNode<Core>>::unit(&ctx);
+            let left = Arc::<ConstructNode<Core>>::pair(&unit, &unit).unwrap();
+            let right = Arc::<ConstructNode<Core>>::unit(&ctx);
+            let disc = Arc::<ConstructNode<Core>>::disconnect(&left, &Some(right)).unwrap();
+            (
+                disc.finalize_types_non_program().unwrap(),
+                disc.finalize_unpruned().unwrap(),
+            )
+        });
+
+        let commit_cost = commit.analyze_cost();
+        dbg!(commit_cost);
+        dbg!(redeem.cost());
+        assert_eq!(redeem.cost(), commit_cost);
+    }
+
+    #[test]
+    fn costs_match_witness_and_fail() {
+        use crate::types::Context;
+        use crate::node::SimpleFinalizer;
+        use crate::jet::Core;
+        use crate::merkle::FailEntropy;
+        use crate::Value;
+        use std::sync::Arc;
+
+        // witness
+        let commit_wit = Context::with_context(|ctx| {
+            let wit = Arc::<ConstructNode<Core>>::witness(&ctx, Some(Value::u32(7)));
+            wit.finalize_types_non_program().unwrap()
+        });
+        let commit_wit_cost = commit_wit.analyze_cost();
+        let redeem_wit = commit_wit
+            .finalize(&mut SimpleFinalizer::new(std::iter::empty()))
+            .unwrap();
+        assert_eq!(redeem_wit.cost(), commit_wit_cost);
+
+        // fail
+        let commit_fail = Context::with_context(|ctx| {
+            let f = Arc::<ConstructNode<Core>>::fail(&ctx, FailEntropy::ZERO);
+            f.finalize_types_non_program().unwrap()
+        });
+        let commit_fail_cost = commit_fail.analyze_cost();
+        let redeem_fail = commit_fail
+            .finalize(&mut SimpleFinalizer::new(std::iter::empty()))
+            .unwrap();
+        assert_eq!(redeem_fail.cost(), commit_fail_cost);
     }
 }
