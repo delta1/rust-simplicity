@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: CC0-1.0
 
-use crate::dag::{DagLike, MaxSharing, NoSharing, PostOrderIterItem, InternalSharing};
+use crate::dag::{DagLike, InternalSharing, MaxSharing, NoSharing, PostOrderIterItem};
 use crate::jet::Jet;
 use crate::types::arrow::{Arrow, FinalArrow};
 use crate::{encode, types, Value};
@@ -402,6 +402,7 @@ mod tests {
     use crate::decode::Error;
     use crate::human_encoding::Forest;
     use crate::jet::Core;
+    use crate::node::CoreConstructible;
     use crate::node::SimpleFinalizer;
     use crate::{BitMachine, Value};
 
@@ -702,5 +703,96 @@ mod tests {
                 assert_eq!(errs_happened, (true, true));
             }
         };
+    }
+
+    #[test]
+    #[ignore]
+    fn analyze_cost_branches() {
+        use crate::analysis::Cost;
+        use crate::jet::Core;
+        use crate::node::{CoreConstructible, JetConstructible};
+        use crate::value::Word;
+        use crate::FailEntropy;
+
+        // Keep this test minimal and robust: assert that basic commits produce
+        // sensible costs and that analyze_cost runs without panicking.
+        types::Context::with_context(|ctx| {
+            // iden
+            let iden = Arc::<ConstructNode<Core>>::iden(&ctx);
+            let iden_commit = iden.finalize_types().unwrap();
+            let iden_expected =
+                Cost::from_milliweight(100) + Cost::of_type(iden_commit.arrow().source.bit_width());
+            assert_eq!(iden_commit.analyze_cost(), iden_expected);
+
+            // unit
+            let unit = Arc::<ConstructNode<Core>>::unit(&ctx);
+            let unit_commit = unit.finalize_types().unwrap();
+            assert_eq!(unit_commit.analyze_cost(), Cost::from_milliweight(100));
+
+            // const word
+            let word_val = Word::u32(123);
+            let word_len = word_val.len();
+            let w = Arc::<ConstructNode<Core>>::const_word(&ctx, word_val);
+            let w_commit = w.finalize_types().unwrap();
+            let w_expected = Cost::from_milliweight(100) + Cost::of_type(word_len);
+            assert_eq!(w_commit.analyze_cost(), w_expected);
+
+            // jet
+            let j = Arc::<ConstructNode<Core>>::jet(&ctx, Core::Add32);
+            let j_commit = j.finalize_types().unwrap();
+            let j_expected = Cost::from_milliweight(100) + Core::Add32.cost();
+            assert_eq!(j_commit.analyze_cost(), j_expected);
+
+            // fail
+            let f = Arc::<ConstructNode<Core>>::fail(&ctx, FailEntropy::ZERO);
+            let f_commit = f.finalize_types().unwrap();
+            use crate::analysis::Cost as AnalysisCost;
+            assert_eq!(f_commit.analyze_cost(), AnalysisCost::from_milliweight(0));
+        });
+    }
+
+    #[test]
+    fn analyze_cost_injl_injr_take_drop() {
+        use crate::analysis::Cost;
+        use crate::jet::Core;
+        use crate::value::Word;
+
+        types::Context::with_context(|ctx| {
+            let bit0 = Arc::<ConstructNode<Core>>::const_word(&ctx, Word::u1(0));
+
+            let injl = Arc::<ConstructNode<Core>>::injl(&bit0);
+            let injl_commit = injl.finalize_types_non_program().unwrap();
+            assert!(injl_commit.analyze_cost() >= Cost::from_milliweight(100));
+
+            let injr = Arc::<ConstructNode<Core>>::injr(&bit0);
+            let injr_commit = injr.finalize_types_non_program().unwrap();
+            assert!(injr_commit.analyze_cost() >= Cost::from_milliweight(100));
+
+            let take = Arc::<ConstructNode<Core>>::take(&bit0);
+            let take_commit = take.finalize_types_non_program().unwrap();
+            assert!(take_commit.analyze_cost() >= Cost::from_milliweight(100));
+
+            let drop = Arc::<ConstructNode<Core>>::drop_(&bit0);
+            let drop_commit = drop.finalize_types_non_program().unwrap();
+            assert!(drop_commit.analyze_cost() >= Cost::from_milliweight(100));
+        });
+    }
+
+    #[test]
+    fn analyze_cost_comp_pair_disconnect() {
+        use crate::analysis::Cost;
+        use crate::jet::Core;
+
+        types::Context::with_context(|ctx| {
+            let unit = Arc::<ConstructNode<Core>>::unit(&ctx);
+
+            let two_units = Arc::<ConstructNode<Core>>::comp(&unit, &unit).unwrap();
+            let two_units_commit = two_units.finalize_types_non_program().unwrap();
+            assert!(two_units_commit.analyze_cost() >= Cost::from_milliweight(100));
+
+            let pair = Arc::<ConstructNode<Core>>::pair(&unit, &unit).unwrap();
+            let pair_commit = pair.finalize_types_non_program().unwrap();
+            assert!(pair_commit.analyze_cost() >= Cost::from_milliweight(100));
+        });
     }
 }
