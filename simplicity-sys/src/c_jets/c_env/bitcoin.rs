@@ -121,8 +121,8 @@ impl CTxEnv {
 impl Drop for CTxEnv {
     fn drop(&mut self) {
         unsafe {
-            crate::alloc::rust_0_6_free(self.tx as *mut u8);
-            crate::alloc::rust_0_6_free(self.taproot as *mut u8);
+            crate::alloc::rust_0_7_free(self.tx as *mut u8);
+            crate::alloc::rust_0_7_free(self.taproot as *mut u8);
         }
     }
 }

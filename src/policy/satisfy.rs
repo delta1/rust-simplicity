@@ -273,7 +273,7 @@ impl<Pk: ToXOnlyPubkey> Policy<Pk> {
     pub fn satisfy<'brand, S: Satisfier<'brand, Pk>>(
         &self,
         satisfier: &S,
-        env: &ElementsEnv<Arc<elements::Transaction>>,
+        env: &ElementsEnv<impl core::borrow::Borrow<elements::Transaction>>,
     ) -> Result<Arc<RedeemNode>, SatisfierError> {
         let result = self.satisfy_internal(satisfier)?;
         match result.get_node() {
@@ -343,10 +343,9 @@ mod tests {
         }
     }
 
-    fn get_satisfier<'tx, 'brand>(
+    fn get_satisfier<'tx, 'brand, T: core::borrow::Borrow<elements::Transaction>>(
         context: types::Context<'brand>,
-
-        env: &'tx ElementsEnv<Arc<elements::Transaction>>,
+        env: &'tx ElementsEnv<T>,
     ) -> PolicySatisfier<'tx, 'brand, XOnlyPublicKey> {
         let mut preimages = HashMap::new();
 
@@ -383,14 +382,17 @@ mod tests {
         }
     }
 
-    fn execute_successful(program: Arc<RedeemNode>, env: &ElementsEnv<Arc<elements::Transaction>>) {
+    fn execute_successful<T: core::borrow::Borrow<elements::Transaction>>(
+        program: Arc<RedeemNode>,
+        env: &ElementsEnv<T>,
+    ) {
         let mut mac = BitMachine::for_program(&program).unwrap();
         assert!(mac.exec(&program, env).is_ok());
     }
 
-    fn execute_unsuccessful(
+    fn execute_unsuccessful<T: core::borrow::Borrow<elements::Transaction>>(
         program: Arc<RedeemNode>,
-        env: &ElementsEnv<Arc<elements::Transaction>>,
+        env: &ElementsEnv<T>,
     ) {
         let mut mac = BitMachine::for_program(&program).unwrap();
         assert!(mac.exec(&program, env).is_err());
