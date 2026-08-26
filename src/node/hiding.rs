@@ -55,29 +55,42 @@ impl<'brand, N> Hiding<'brand, N> {
         }
     }
 
-    /// If the node is not hidden, apply a function to the underlying node. If it is hidden,
-    /// do nothing.
+    /// If the node is not hidden, apply `mapfn` to the underlying node. If it is hidden,
+    /// apply `cmrfn` to the hidden node's CMR.
+    ///
+    /// When a "hidden" node passes through a combinator its CMR must be updated to
+    /// reflect that combinator (e.g. `Cmr::drop` for `drop_`). Otherwise the simulated
+    /// hidden subtree would carry the CMR of its original, unwrapped node.
     #[inline]
-    pub fn map_ref<M>(&self, mapfn: impl FnOnce(&N) -> M) -> Hiding<'brand, M> {
+    pub fn map_ref<M>(
+        &self,
+        mapfn: impl FnOnce(&N) -> M,
+        cmrfn: impl FnOnce(Cmr) -> Cmr,
+    ) -> Hiding<'brand, M> {
         use core::convert::Infallible;
-        match self.map_ref_result::<_, Infallible>(|node| Ok(mapfn(node))) {
+        match self.map_ref_result::<_, Infallible>(|node| Ok(mapfn(node)), cmrfn) {
             Ok(res) => res,
             Err(inf) => match inf {},
         }
     }
 
-    /// If the node is not hidden, apply a function to the underlying node. If it is hidden,
-    /// do nothing.
+    /// If the node is not hidden, apply `mapfn` to the underlying node. If it is hidden,
+    /// apply `cmrfn` to the hidden node's CMR.
+    ///
+    /// When a "hidden" node passes through a combinator its CMR must be updated to
+    /// reflect that combinator (e.g. `Cmr::drop` for `drop_`). Otherwise the simulated
+    /// hidden subtree would carry the CMR of its original, unwrapped node.
     #[inline]
     pub fn map_ref_result<M, Err>(
         &self,
         mapfn: impl FnOnce(&N) -> Result<M, Err>,
+        cmrfn: impl FnOnce(Cmr) -> Cmr,
     ) -> Result<Hiding<'brand, M>, Err> {
         Ok(Hiding {
             inner: match self.inner {
                 HidingInner::Node(ref n) => HidingInner::Node(mapfn(n)?),
                 HidingInner::Hidden { cmr, ref arrow } => HidingInner::Hidden {
-                    cmr,
+                    cmr: cmrfn(cmr),
                     arrow: arrow.shallow_clone(),
                 },
             },
@@ -183,19 +196,19 @@ impl<'brand, N: HasCmr + CoreConstructible<'brand>> CoreConstructible<'brand>
     }
 
     fn injl(child: &Self) -> Self {
-        child.map_ref(N::injl)
+        child.map_ref(N::injl, Cmr::injl)
     }
 
     fn injr(child: &Self) -> Self {
-        child.map_ref(N::injr)
+        child.map_ref(N::injr, Cmr::injr)
     }
 
     fn take(child: &Self) -> Self {
-        child.map_ref(N::take)
+        child.map_ref(N::take, Cmr::take)
     }
 
     fn drop_(child: &Self) -> Self {
-        child.map_ref(N::drop_)
+        child.map_ref(N::drop_, Cmr::drop)
     }
 
     fn comp(left: &Self, right: &Self) -> Result<Self, Error> {
@@ -221,11 +234,11 @@ impl<'brand, N: HasCmr + CoreConstructible<'brand>> CoreConstructible<'brand>
     }
 
     fn assertl(left: &Self, right: Cmr) -> Result<Self, Error> {
-        left.map_ref_result(|left| N::assertl(left, right))
+        left.map_ref_result(|left| N::assertl(left, right), |cmr| Cmr::case(cmr, right))
     }
 
     fn assertr(left: Cmr, right: &Self) -> Result<Self, Error> {
-        right.map_ref_result(|right| N::assertr(left, right))
+        right.map_ref_result(|right| N::assertr(left, right), |cmr| Cmr::case(left, cmr))
     }
 
     fn pair(left: &Self, right: &Self) -> Result<Self, Error> {
@@ -257,7 +270,7 @@ where
     N: DisconnectConstructible<'brand, Option<X>> + CoreConstructible<'brand> + HasCmr,
 {
     fn disconnect(left: &Self, right: &Option<X>) -> Result<Self, Error> {
-        left.map_ref_result(|left| N::disconnect(left, right))
+        left.map_ref_result(|left| N::disconnect(left, right), Cmr::disconnect)
     }
 }
 
